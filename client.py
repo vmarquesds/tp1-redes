@@ -1,4 +1,5 @@
-import socket, base64, struct, sys, time
+import socket, base64, struct, sys, time, binascii
+from typing import Type
 
 class Frame:
     def __init__(self, sync1=0, sync2=0, length=0, checksum=0, id_=0, flags=0, dados=0):
@@ -48,19 +49,38 @@ def set_sock(args):
 
         return s, config, conn, ender
 
+def checksum(info):
+    s = 0
+    for i in range(0, len(info), 4):
+        s += int(info[i:i+4], 16)
+        if len(hex(s)) > 6:
+            s = (int(hex(s)[2], 16) + int(hex(s)[3:], 16))
+    return s ^ 0xFFFF
 
-def frame_mount(config, id_=0):
+def fill_checksum(frame):
+    cod = f'!IIHHBB{frame.length}s'
+    # Empacota
+    dt = struct.pack(cod, frame.sync1, frame.sync2, frame.length, frame.checksum, frame.id_, frame.flags, frame.dados)
+    frame.checksum = checksum(binascii.b2a_hex(dt).decode())
+    return frame
+
+
+def frame_mount(config, id_=0, flag=0):
     data_frame = config.input_
-    cod = f'!IIHBBB7s'
+    cod = f'!IIHHBB7s'
 
-    if config.id_flag == 'end':
+    if flag == 'end':
         f = Frame(0xdcc023c2, 0xdcc023c2, 0, 0, 0, 0x40, str.encode('1234567'))
+        f = fill_checksum(f)
+
         ENDdata = struct.pack(cod, f.sync1, f.sync2, f.length, f.checksum, f.id_, f.flags, f.dados)
         # print(ENDdata)
 
         return ENDdata
-    if data_frame == 0:
+    if flag == 'ack':
         f = Frame(0xdcc023c2, 0xdcc023c2, 0, 0, 0, 0x80, str.encode('1234567'))
+        f = fill_checksum(f)
+
         ACKdata = struct.pack(cod, f.sync1, f.sync2, f.length, f.checksum, f.id_, f.flags, f.dados)
         # print(ACKdata)
 
@@ -68,45 +88,29 @@ def frame_mount(config, id_=0):
     
 
     data_len = len(data_frame)
-    fchecksum_str = hex(((sum(int(base64.b16encode(bytes(data_frame, 'ascii'))[i:i+2],16) for i in range(0, len(base64.b16encode(bytes(data_frame, 'ascii'))), 2))%0x100)^0xFF)+1)[2:]
-    fcheksum_int = int(fchecksum_str, 16)
-
-    f = Frame(0xdcc023c2, 0xdcc023c2, data_len, fcheksum_int, id_, 0, str.encode(data_frame))
-    cod = f'!IIHBBB{data_len}s'
-
-    # Empacota
-    sdata = struct.pack(cod, f.sync1, f.sync2, f.length, f.checksum, f.id_, f.flags, f.dados)
-    # print(sdata)
+    f = Frame(0xdcc023c2, 0xdcc023c2, data_len, 0, id_, 0, str.encode(data_frame))
+    f = fill_checksum(f)
+    sdata = struct.pack(f'!IIHHBB{f.length}s', f.sync1, f.sync2, f.length, f.checksum, f.id_, f.flags, f.dados)
 
     return sdata
 
 def frame_unmount(data):
-    udata = struct.unpack('!IIHBBB7s', data)
+    udata = struct.unpack('!IIHHBB7s', data)
     frame = Frame(udata[0], udata[1], udata[2], udata[3], udata[4], udata[5], udata[6])
     # print('dado desempacotado: ', hex(frame.flags))
 
     return frame
 
-def frame_ACKm(config):
-    return frame_mount(config)
+def check_chksum(frame):
+    aux = frame.checksum
+    frame.checksum = 0
+    aux2 = fill_checksum(frame).checksum
+    if aux == aux2:
+        return True
+    else:
+        return False
+        
 
-def frame_ENDm(config):
-    config.id_flag = 'end'
-    return frame_mount(config)
-
-
-def encode16(data):
-    encode = base64.b16encode(data)
-    # print('Dado encryptado: ', encode)
-
-    return encode
-
-def decode16(data):
-    decode = base64.b16decode(data)
-    
-    return decode
-
-ENDframe = encode16(frame_ENDm(Configs()))
 
 def send_msg_mult_pckg(s, config):
     totalsent = 0
@@ -116,35 +120,35 @@ def send_msg_mult_pckg(s, config):
     print(msg)
 
     while totalsent < len(msg):
-
         config.input_ = msg[totalsent]
         id_ = 1 - id_
 
         sdata = frame_mount(config, id_)
-        encode = encode16(sdata)
-        sent = s.send(encode)
-        if sent == 0:
-            raise RuntimeError("socket connection broken")
+        encode = base64.b16encode((sdata))
+        s.send(encode)
+
         totalsent = totalsent + 1
         
         s.settimeout(2)
         try:
             rdata = s.recv(1024)
-            rdata = decode16(rdata)
+            rdata = base64.b16decode(rdata)
             unmtpacket = frame_unmount(rdata)
+
+            if not check_chksum(unmtpacket):
+                totalsent = totalsent - 1
+                raise TypeError('id dif')
+
+            if unmtpacket.id_ != id_:
+                totalsent = totalsent - 1
+                raise TypeError('id dif')
         except:
             totalsent = totalsent - 1
             continue
 
         print('Mensagem recebida: ', rdata)
-            
-        # if unmtpacket.flags == 128:
-        #     edata = encode16(ENDframe)
-        #     s.sendall(edata)
-        #     # time.sleep(1)
-        #     print('Fim da conexão')
-        #     sys.exit(1)
     
+    ENDframe = base64.b16encode(frame_mount(Configs(), 0, 'end'))
     s.send(ENDframe)
     print('Fim')
 
@@ -157,10 +161,15 @@ def receive_msg(s, conn):
         s.settimeout(2)
         try:
             data = conn.recv(1024)
+            data = base64.b16decode(data)
+            unmtpacket = frame_unmount(data)
+
+            if not check_chksum(unmtpacket):
+                totalsent = totalsent - 1
+                raise TypeError('id dif')
         except:
             print('Acabou o tempo', data)
         # Decodifica os dados
-        data = base64.b16decode(data)
         
         if not data:
             print('Fechando conexão')
@@ -170,18 +179,18 @@ def receive_msg(s, conn):
         print('Data recebida: ', data)
 
         # Desempacota
-        udata = struct.unpack('!IIHBBB7s', data)
+        udata = struct.unpack('!IIHHBB7s', data)
         print('Data unpacked: ', udata)
 
         if udata[5] == 64:
-            conn.sendall(ENDframe)
+            conn.sendall(base64.b16encode(frame_mount(Configs(), 0, 'end')))
             time.sleep(1)
             print('Encerrando conexão')
             sys.exit(1)
         
         output.write(udata[6].decode())
 
-        ACKframe = encode16(frame_ACKm(Configs(), udata[4]))
+        ACKframe = base64.b16encode((frame_mount(Configs(), udata[4], 'ack')))
 
         #Mandando quadro de confirmação
         conn.sendall(ACKframe)
@@ -189,5 +198,9 @@ def receive_msg(s, conn):
 
 if __name__ == '__main__':
     
-    s, config = set_sock(sys.argv)
-    send_msg_mult_pckg(s, config)
+    if len(sys.argv) == 6:
+        s, config = set_sock(sys.argv)
+        send_msg_mult_pckg(s, config)
+    else:
+        s, config, conn, ender = set_sock(sys.argv)
+        receive_msg(s, conn)
