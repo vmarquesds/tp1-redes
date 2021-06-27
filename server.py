@@ -105,6 +105,46 @@ def decode16(data):
 
 ENDframe = encode16(frame_ENDm(Configs()))
 
+def send_msg_mult_pckg(s, config):
+    totalsent = 0
+    id_ = 0
+    input_ = open(f'{config.input_}.txt', 'r+')
+    msg = input_.readlines()
+    print(msg)
+
+    while totalsent < len(msg):
+
+        config.input_ = msg[totalsent]
+        id_ = 1 - id_
+
+        sdata = frame_mount(config, id_)
+        encode = encode16(sdata)
+        sent = s.send(encode)
+        if sent == 0:
+            raise RuntimeError("socket connection broken")
+        totalsent = totalsent + 1
+        
+        s.settimeout(2)
+        try:
+            rdata = s.recv(1024)
+            rdata = decode16(rdata)
+            unmtpacket = frame_unmount(rdata)
+        except:
+            totalsent = totalsent - 1
+            continue
+
+        print('Mensagem recebida: ', rdata)
+            
+        # if unmtpacket.flags == 128:
+        #     edata = encode16(ENDframe)
+        #     s.sendall(edata)
+        #     # time.sleep(1)
+        #     print('Fim da conexão')
+        #     sys.exit(1)
+    
+    s.send(ENDframe)
+    print('Fim')
+
 def receive_msg(s, conn):
     output = open(f'{config.output_}.txt', 'a+')
   # print(config.input_)
@@ -146,5 +186,9 @@ def receive_msg(s, conn):
 
 if __name__ == '__main__':
   
-  s, config, conn, ender = set_sock(sys.argv)
-  receive_msg(s, conn)
+  if len(sys.argv) == 6:
+    s, config = set_sock(sys.argv)
+    send_msg_mult_pckg(s, config)
+  else:
+    s, config, conn, ender = set_sock(sys.argv)
+    receive_msg(s, conn)

@@ -106,7 +106,6 @@ def decode16(data):
     
     return decode
 
-ACKframe = encode16(frame_ACKm(Configs()))
 ENDframe = encode16(frame_ENDm(Configs()))
 
 def send_msg_mult_pckg(s, config):
@@ -148,6 +147,45 @@ def send_msg_mult_pckg(s, config):
     
     s.send(ENDframe)
     print('Fim')
+
+def receive_msg(s, conn):
+    output = open(f'{config.output_}.txt', 'a+')
+  # print(config.input_)
+
+    while True:
+        # time.sleep(1)
+        s.settimeout(2)
+        try:
+            data = conn.recv(1024)
+        except:
+            print('Acabou o tempo', data)
+        # Decodifica os dados
+        data = base64.b16decode(data)
+        
+        if not data:
+            print('Fechando conexão')
+            conn.close()
+            break
+        
+        print('Data recebida: ', data)
+
+        # Desempacota
+        udata = struct.unpack('!IIHBBB7s', data)
+        print('Data unpacked: ', udata)
+
+        if udata[5] == 64:
+            conn.sendall(ENDframe)
+            time.sleep(1)
+            print('Encerrando conexão')
+            sys.exit(1)
+        
+        output.write(udata[6].decode())
+
+        ACKframe = encode16(frame_ACKm(Configs(), udata[4]))
+
+        #Mandando quadro de confirmação
+        conn.sendall(ACKframe)
+    output.close()
 
 if __name__ == '__main__':
     
