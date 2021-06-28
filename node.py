@@ -70,17 +70,15 @@ def frame_mount(config, id_=0, flag=0):
     cod = f'!IIHHBB7s'
 
     if flag == 'end':
-        f = Frame(0xdcc023c2, 0xdcc023c2, 0, 0, 0, 0x40, str.encode('1234567'))
+        f = Frame(0xdcc023c2, 0xdcc023c2, 0, 0, id_, 0x40, str.encode('1234567'))
         f = fill_checksum(f)
-
         ENDdata = struct.pack(cod, f.sync1, f.sync2, f.length, f.checksum, f.id_, f.flags, f.dados)
         # print(ENDdata)
 
         return ENDdata
     if flag == 'ack':
-        f = Frame(0xdcc023c2, 0xdcc023c2, 0, 0, 0, 0x80, str.encode('1234567'))
+        f = Frame(0xdcc023c2, 0xdcc023c2, 0, 0, id_, 0x80, str.encode('1234567'))
         f = fill_checksum(f)
-
         ACKdata = struct.pack(cod, f.sync1, f.sync2, f.length, f.checksum, f.id_, f.flags, f.dados)
         # print(ACKdata)
 
@@ -115,9 +113,19 @@ def check_chksum(frame):
 def send_msg_mult_pckg(s, config):
     totalsent = 0
     id_ = 0
-    input_ = open(f'{config.input_}.txt', 'r+')
-    msg = input_.readlines()
-    print(msg)
+    # input_ = open(f'{config.input_}.txt')
+    chunk_size = int(7)
+    msg = []
+    with open(f'{config.input_}.txt') as fh:
+        while (contents := fh.read(chunk_size)):
+            count = 0
+            if len(contents) < chunk_size:
+                while (chunk_size - len(contents)):
+                    contents = contents[:len(contents)] + ' '
+                    print(contents, len(contents), chunk_size - len(contents))
+                    count += 1
+            msg.append(contents)
+    # print(msg)
 
     while totalsent < len(msg):
         config.input_ = msg[totalsent]

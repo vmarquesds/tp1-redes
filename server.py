@@ -111,12 +111,21 @@ def check_chksum(frame):
 def send_msg_mult_pckg(s, config):
     totalsent = 0
     id_ = 0
-    input_ = open(f'{config.input_}.txt', 'r+')
-    msg = input_.readlines()
-    print(msg)
+    # input_ = open(f'{config.input_}.txt')
+    chunk_size = int(7)
+    msg = []
+    with open(f'{config.input_}.txt') as fh:
+        while (contents := fh.read(chunk_size)):
+            count = 0
+            if len(contents) < 7:
+                while (7 - len(contents)):
+                    contents = contents[:len(contents)] + ' '
+                    print(contents, len(contents), 7 - len(contents))
+                    count += 1
+            msg.append(contents)
+    # print(msg)
 
     while totalsent < len(msg):
-
         config.input_ = msg[totalsent]
         id_ = 1 - id_
 
@@ -131,6 +140,14 @@ def send_msg_mult_pckg(s, config):
             rdata = s.recv(1024)
             rdata = base64.b16decode(rdata)
             unmtpacket = frame_unmount(rdata)
+
+            if not check_chksum(unmtpacket):
+                totalsent = totalsent - 1
+                raise TypeError('id dif')
+
+            if unmtpacket.id_ != id_:
+                totalsent = totalsent - 1
+                raise TypeError('id dif')
         except:
             totalsent = totalsent - 1
             continue
